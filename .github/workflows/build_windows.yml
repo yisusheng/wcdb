@@ -1,0 +1,67 @@
+name: Build WCDB Windows
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  build:
+    name: Compile for Windows
+    runs-on: windows-latest
+
+    steps:
+    # 1. 拉取代码 (对应文档: 拉取 WCDB 源码)
+    # 注意：文档提到需要 git submodule update，这里使用 submodules: recursive 自动处理
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    # 2. 配置 CMake (对应文档: 生成VS工程)
+    # 文档步骤：在 src 目录下 -> mkdir build -> cd build -> cmake ..
+    - name: Configure CMake
+      working-directory: ./src
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release
+
+    # 3. 执行编译 (对应文档: 用Visual Studio打开编译)
+    # 在 CI 中我们使用 cmake --build 命令行来替代手动打开 VS
+    - name: Build Solution
+      working-directory: ./src/build
+      run: cmake --build . --config Release
+
+    # 4. 整理产物
+    # 文档提到：
+    # 1. 编译完成后可以看到 WCDB.sln (在 src/build)
+    # 2. 头文件在 export_headers 文件夹 (在 src/build/export_headers)
+    # 3. 库文件在 Release 或 Debug 文件夹 (在 src/build/Release)
+    - name: Prepare Artifacts
+      shell: powershell
+      run: |
+        New-Item -ItemType Directory -Force -Path "publish/include"
+        New-Item -ItemType Directory -Force -Path "publish/lib"
+        
+        # 复制头文件
+        if (Test-Path "src/build/export_headers") {
+            Copy-Item -Path "src/build/export_headers/*" -Destination "publish/include" -Recurse
+        } else {
+            Write-Warning "export_headers directory not found!"
+        }
+
+        # 复制库文件 (.lib, .dll, .pdb)
+        if (Test-Path "src/build/Release") {
+            Get-ChildItem -Path "src/build/Release" -Include *.lib, *.dll, *.pdb -Recurse | Copy-Item -Destination "publish/lib"
+        }
+
+    # 5. 上传产物到 GitHub Actions Summary
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wcdb-windows-release
+        path: publish/
